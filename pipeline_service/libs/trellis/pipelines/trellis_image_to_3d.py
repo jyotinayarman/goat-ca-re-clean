@@ -370,25 +370,42 @@ class TrellisImageTo3DPipeline(Pipeline):
                 cfg_interval,
                 **kwargs,
             ):
+                # Handle both cond and neg_cond as lists
+                # get_slat_cond returns lists when there are multiple images
+                if isinstance(cond, list):
+                    cond_list = cond
+                else:
+                    cond_list = [cond] if cond is not None else []
+                
+                if isinstance(neg_cond, list):
+                    neg_cond_list = neg_cond
+                else:
+                    neg_cond_list = [neg_cond] if neg_cond is not None else []
+                
                 if cfg_interval[0] <= t <= cfg_interval[1]:
                     preds = []
-                    for i in range(len(cond)):
+                    for i in range(len(cond_list)):
                         preds.append(
                             FlowEulerSampler._inference_model(
-                                self, model, x_t, t, cond[i : i + 1], **kwargs
+                                self, model, x_t, t, cond_list[i], **kwargs
                             )
                         )
                     pred = sum(preds) / len(preds)
-                    neg_pred = FlowEulerSampler._inference_model(
-                        self, model, x_t, t, neg_cond, **kwargs
-                    )
+                    # Use first neg_cond (should be zeros anyway)
+                    neg_pred_val = neg_cond_list[0] if len(neg_cond_list) > 0 else (neg_cond if not isinstance(neg_cond, list) else None)
+                    if neg_pred_val is not None:
+                        neg_pred = FlowEulerSampler._inference_model(
+                            self, model, x_t, t, neg_pred_val, **kwargs
+                        )
+                    else:
+                        neg_pred = torch.zeros_like(pred)
                     return (1 + cfg_strength) * pred - cfg_strength * neg_pred
                 else:
                     preds = []
-                    for i in range(len(cond)):
+                    for i in range(len(cond_list)):
                         preds.append(
                             FlowEulerSampler._inference_model(
-                                self, model, x_t, t, cond[i : i + 1], **kwargs
+                                self, model, x_t, t, cond_list[i], **kwargs
                             )
                         )
                     pred = sum(preds) / len(preds)
@@ -645,7 +662,15 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
         coords = torch.argwhere(decoder(ss_latent)>0)[:, [0, 2, 3, 4]].int()
 
         slat_cond = self.get_slat_cond(image_cond, aggregated_tokens_list, num_samples)
-        slat = self.sample_slat(slat_cond, coords, slat_sampler_params)
+        # Handle multi-image conditioning by using inject_sampler_multi_image
+        # get_slat_cond returns lists when there are multiple images
+        num_images = len(image) if isinstance(image, list) else 1
+        if num_images > 1:
+            slat_steps = {**self.slat_sampler_params, **slat_sampler_params}.get('steps', 20)
+            with self.inject_sampler_multi_image('slat_sampler', num_images, slat_steps, mode=mode):
+                slat = self.sample_slat(slat_cond, coords, slat_sampler_params)
+        else:
+            slat = self.sample_slat(slat_cond, coords, slat_sampler_params)
         return self.decode_slat(slat, formats), coords, ss_noise
 
     @staticmethod
