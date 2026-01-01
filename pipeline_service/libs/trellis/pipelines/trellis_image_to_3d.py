@@ -32,6 +32,7 @@ class TrellisImageTo3DPipeline(Pipeline):
         slat_normalization (dict): The normalization parameters for the structured latent.
         image_cond_model (str): The name of the image conditioning model.
     """
+    default_image_resolution = 518
 
     def __init__(
         self,
