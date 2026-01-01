@@ -7,6 +7,8 @@ __attributes = {
     'SLatEncoder': 'structured_latent_vae',
     'SLatGaussianDecoder': 'structured_latent_vae',
     'SLatFlowModel': 'structured_latent_flow',
+    'ModulatedMultiViewCond': 'sparse_structure_flow',
+    'ModulatedSLATMultiViewCond': 'structured_latent_flow',
 }
 
 __submodules = []
@@ -15,17 +17,16 @@ __all__ = list(__attributes.keys()) + __submodules
 
 def __getattr__(name):
     if name not in globals():
-        if name not in ["SLatMeshDecoder", "SLatRadianceFieldDecoder"]:
-            if name in __attributes:
-                module_name = __attributes[name]
-                module = importlib.import_module(f".{module_name}", __name__)
-                globals()[name] = getattr(module, name)
-            elif name in __submodules:
-                module = importlib.import_module(f".{name}", __name__)
-                globals()[name] = module
-            else:
-                raise AttributeError(f"module {__name__} has no attribute {name}")
-            return globals()[name]
+        if name in __attributes:
+            module_name = __attributes[name]
+            module = importlib.import_module(f".{module_name}", __name__)
+            globals()[name] = getattr(module, name)
+        elif name in __submodules:
+            module = importlib.import_module(f".{name}", __name__)
+            globals()[name] = module
+        else:
+            raise AttributeError(f"module {__name__} has no attribute {name}")
+    return globals()[name]
 
 
 def from_pretrained(path: str, **kwargs):
@@ -55,19 +56,33 @@ def from_pretrained(path: str, **kwargs):
 
     with open(config_file, 'r') as f:
         config = json.load(f)
-
-    if config['name'] not in ["SLatMeshDecoder", "SLatRadianceFieldDecoder"]:
-        model = __getattr__(config['name'])(**config['args'], **kwargs)
-        model.load_state_dict(load_file(model_file))
-    else:
-        model = None
+    model = __getattr__(config['name'])(**config['args'], **kwargs)
+    model.load_state_dict(load_file(model_file), strict=False)
 
     return model
 
+def save_finetuned_model(model, output_dir: str):
+    """
+    Save a fine-tuned model's state_dict as safetensors with a timestamp.
+
+    Args:
+        model: The model to be saved.
+        output_dir: The directory where the model's state_dict will be saved.
+                    The file will be saved as f'{output_dir}/{timestamp}.safetensors'.
+    """
+    from safetensors.torch import save_file
+    import os
+    from datetime import datetime
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_file(model.state_dict(), f"{output_dir}/{timestamp}.safetensors")
 
 # For Pylance
 if __name__ == '__main__':
     from .sparse_structure_vae import SparseStructureEncoder, SparseStructureDecoder
-    from .sparse_structure_flow import SparseStructureFlowModel
+    from .sparse_structure_flow import SparseStructureFlowModel, ModulatedMultiViewCond
     from .structured_latent_vae import SLatEncoder, SLatGaussianDecoder
-    from .structured_latent_flow import SLatFlowModel
+    from .structured_latent_flow import SLatFlowModel, ModulatedSLATMultiViewCond

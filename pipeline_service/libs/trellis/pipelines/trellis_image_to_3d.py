@@ -6,10 +6,19 @@ import numpy as np
 from torchvision import transforms
 from contextlib import contextmanager
 from PIL import Image
+import os
+import sys
 
 from .base import Pipeline
 from . import samplers
 from ..modules import sparse as sp
+
+# Add the wheels directory to the path for VGGT
+wheels_path = os.path.join(os.path.dirname(__file__), "..", "..", "wheels", "vggt")
+if wheels_path not in sys.path:
+    sys.path.insert(0, wheels_path)
+from vggt.models.vggt import VGGT
+from transformers import AutoModelForImageSegmentation
 
 
 class TrellisImageTo3DPipeline(Pipeline):
@@ -520,3 +529,157 @@ class TrellisImageTo3DPipeline(Pipeline):
         
         outputs = self.decode_slat(slat, formats)
         return outputs, num_voxels
+
+def zero_module(module):
+    """
+    Zero out the parameters of a module and return it.
+    """
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
+
+class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
+    def get_ss_cond(self, image_cond: torch.Tensor, aggregated_tokens_list: List, num_samples: int) -> dict:
+        """
+        Get the conditioning information for the model.
+
+        Args:
+            image_cond: The image conditioning tensor
+            aggregated_tokens_list: List of aggregated tokens from VGGT
+            num_samples: Number of samples
+
+        Returns:
+            dict: The conditioning information
+        """
+        cond = self.sparse_structure_vggt_cond(aggregated_tokens_list, image_cond)
+        neg_cond = torch.zeros_like(cond)
+        return {
+            'cond': cond,
+            'neg_cond': neg_cond,
+        }
+
+    def get_slat_cond(self, image_cond: torch.Tensor, aggregated_tokens_list: List, num_samples: int) -> dict:
+        """
+        Get the conditioning information for the model.
+
+        Args:
+            image_cond: The image conditioning tensor
+            aggregated_tokens_list: List of aggregated tokens from VGGT
+            num_samples: Number of samples
+
+        Returns:
+            dict: The conditioning information
+        """
+        b, n, _, _ = aggregated_tokens_list[0].shape
+        cond = self.slat_vggt_cond(aggregated_tokens_list, image_cond).reshape(b, n, -1, 1024)
+        cond = [c.squeeze(1) for c in cond.split(1, dim=1)]
+        neg_cond = [torch.zeros_like(c) for c in cond]
+        return {
+            'cond': cond,
+            'neg_cond': neg_cond,
+        }
+    
+    @torch.no_grad()
+    def vggt_feat(self, image: Union[torch.Tensor, list[Image.Image]]) -> List:
+        """
+        Encode the image using VGGT.
+
+        Args:
+            image (Union[torch.Tensor, list[Image.Image]]): The image to encode
+
+        Returns:
+            tuple: (aggregated_tokens_list, image_tensor)
+        """
+        if isinstance(image, torch.Tensor):
+            assert image.ndim == 4, "Image tensor should be batched (B, C, H, W)"
+            image = F.interpolate(image, self.default_image_resolution, mode='bilinear', align_corners=False)
+        elif isinstance(image, list):
+            assert all(isinstance(i, Image.Image) for i in image), "Image list should be list of PIL images"
+            image = [i.resize((self.default_image_resolution, self.default_image_resolution), Image.LANCZOS) for i in image]
+            image = [np.array(i.convert('RGB')).astype(np.float32) / 255 for i in image]
+            image = [torch.from_numpy(i).permute(2, 0, 1).float() for i in image]
+            image = torch.stack(image).to(self.device)
+        else:
+            raise ValueError(f"Unsupported type of image: {type(image)}")
+        
+        with torch.no_grad():
+            with torch.cuda.amp.autocast(dtype=self.VGGT_dtype):
+                # Predict attributes including cameras, depth maps, and point maps.
+                aggregated_tokens_list, _ = self.VGGT_model.aggregator(image[None])
+        
+        return aggregated_tokens_list, image
+
+    def run(
+        self,
+        image: Union[torch.Tensor, list[Image.Image]],
+        coords: torch.Tensor = None,
+        num_samples: int = 1,
+        seed: int = 42,
+        sparse_structure_sampler_params: dict = {},
+        slat_sampler_params: dict = {},
+        formats: List[str] = ['gaussian'],
+        preprocess_image: bool = True,
+        mode: Literal['stochastic', 'multidiffusion'] = 'stochastic',
+    ):
+        torch.manual_seed(seed)
+        aggregated_tokens_list, _ = self.vggt_feat(image)
+        b, n, _, _ = aggregated_tokens_list[0].shape
+        image_cond = self.encode_image(image).reshape(b, n, -1, 1024)
+        
+        ss_flow_model = self.models['sparse_structure_flow_model']
+        ss_cond = self.get_ss_cond(image_cond[:, :, 5:], aggregated_tokens_list, num_samples)
+        # Sample structured latent
+        ss_sampler_params = {**self.sparse_structure_sampler_params, **sparse_structure_sampler_params}
+        reso = ss_flow_model.resolution
+        ss_noise = torch.randn(num_samples, ss_flow_model.in_channels, reso, reso, reso).to(self.device)
+        ss_latent = self.sparse_structure_sampler.sample(
+            ss_flow_model,
+            ss_noise,
+            **ss_cond,
+            **ss_sampler_params,
+            verbose=True
+        ).samples
+
+        decoder = self.models['sparse_structure_decoder']
+        coords = torch.argwhere(decoder(ss_latent)>0)[:, [0, 2, 3, 4]].int()
+
+        slat_cond = self.get_slat_cond(image_cond, aggregated_tokens_list, num_samples)
+        slat = self.sample_slat(slat_cond, coords, slat_sampler_params)
+        return self.decode_slat(slat, formats), coords, ss_noise
+
+    @staticmethod
+    def from_pretrained(path: str) -> "TrellisVGGTTo3DPipeline":
+        """
+        Load a pretrained model.
+
+        Args:
+            path (str): The path to the model. Can be either local path or a Hugging Face repository.
+        """
+        pipeline = super(TrellisVGGTTo3DPipeline, TrellisVGGTTo3DPipeline).from_pretrained(path)
+        new_pipeline = TrellisVGGTTo3DPipeline()
+        new_pipeline.__dict__ = pipeline.__dict__
+        args = pipeline._pretrained_args
+        new_pipeline.VGGT_dtype = torch.float32
+        VGGT_model = VGGT.from_pretrained("Stable-X/vggt-object-v0-1")
+        new_pipeline.VGGT_model = VGGT_model.to(new_pipeline.device)
+        del new_pipeline.VGGT_model.depth_head
+        del new_pipeline.VGGT_model.track_head
+        new_pipeline.VGGT_model.eval()
+
+        new_pipeline.birefnet_model = AutoModelForImageSegmentation.from_pretrained(
+            'ZhengPeng7/BiRefNet',
+            trust_remote_code=True
+        ).to(new_pipeline.device)
+        new_pipeline.birefnet_model.eval()
+        
+        new_pipeline.sparse_structure_sampler = getattr(samplers, args['sparse_structure_sampler']['name'])(**args['sparse_structure_sampler']['args'])
+        new_pipeline.sparse_structure_sampler_params = args['sparse_structure_sampler']['params']
+
+        new_pipeline.slat_sampler = getattr(samplers, args['slat_sampler']['name'])(**args['slat_sampler']['args'])
+        new_pipeline.slat_sampler_params = args['slat_sampler']['params']
+
+        new_pipeline.slat_normalization = args['slat_normalization']
+
+        new_pipeline._init_image_cond_model(args['image_cond_model'])
+
+        return new_pipeline

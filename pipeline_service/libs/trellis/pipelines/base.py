@@ -11,12 +11,21 @@ class Pipeline:
         self,
         models: dict[str, nn.Module] = None,
     ):
+        self.t_scheduler = 'uniform'
         if models is None:
             return
         self.models = models
         for model in self.models.values():
             if model is not None:
                 model.eval()
+        if 'slat_flow_model' in self.models:
+            self.slat_flow_model = self.models['slat_flow_model']
+        if 'sparse_structure_flow_model' in self.models:
+            self.sparse_structure_flow_model = self.models['sparse_structure_flow_model']
+        if 'sparse_structure_vggt_cond' in self.models:
+            self.sparse_structure_vggt_cond = self.models['sparse_structure_vggt_cond']
+        if 'slat_vggt_cond' in self.models:
+            self.slat_vggt_cond = self.models['slat_vggt_cond']
 
     @staticmethod
     def from_pretrained(path: str) -> "Pipeline":

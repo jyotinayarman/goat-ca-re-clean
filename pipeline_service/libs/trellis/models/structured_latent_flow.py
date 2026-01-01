@@ -265,3 +265,59 @@ class SLatFlowModel(nn.Module):
         h = h.replace(F.layer_norm(h.feats, h.feats.shape[-1:]))
         h = self.out_layer(h.type(x.dtype))
         return h
+
+class ModulatedSLATMultiViewCond(nn.Module):
+    """
+    Transformer cross-attention block (MSA + MCA + FFN) with adaptive layer norm conditioning.
+    """
+    def __init__(
+        self,
+        channels: int,
+        ctx_channels: int,
+        dtype: Optional[torch.dtype] = torch.float32,
+        use_fp16: bool = True,
+    ):
+        super().__init__()
+        self.linear_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(ctx_channels, channels, bias=True),
+                nn.ReLU(),
+            )
+            for _ in range(4)
+        ])
+        self.fuse_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(ctx_channels, channels, bias=True),
+                nn.ReLU(),
+            )
+            for _ in range(4)
+        ])
+        self.use_fp16 = use_fp16
+        if use_fp16:
+            self.dtype = torch.float16
+        else:
+            self.dtype = dtype
+
+        self.intermediate_layer_idx = [4, 11, 17, 23]
+        if use_fp16:
+            self.convert_to_fp16()
+    
+    def convert_to_fp16(self) -> None:
+        """
+        Convert the torso of the model to float16.
+        """
+        self.use_fp16 = True
+        self.dtype = torch.float16
+        self.linear_blocks.apply(convert_module_to_f16)
+    
+    def forward(self, aggregated_tokens_list: List, image_cond: torch.Tensor):
+        b, n, _, _ = aggregated_tokens_list[0].shape
+        idx = 0
+        cond = image_cond.reshape(b*n, -1, 1024).to(self.dtype)
+        for layer_idx in self.intermediate_layer_idx:
+            x = aggregated_tokens_list[layer_idx]
+            x = torch.cat([x.reshape(b*n, -1, 2048), cond.reshape(b*n, -1, 1024)],dim=-1).to(self.dtype)
+            x = self.linear_blocks[idx](x)
+            cond = x + image_cond.reshape(b*n, -1, 1024).to(self.dtype)
+            idx = idx + 1
+        return cond
