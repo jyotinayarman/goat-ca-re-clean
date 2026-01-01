@@ -45,10 +45,16 @@ class Pipeline:
         with open(config_file, 'r') as f:
             args = json.load(f)['args']
 
-        _models = {
-            k: models.from_pretrained(f"{path}/{v}")
-            for k, v in args['models'].items()
-        }
+        _models = {}
+        for k, v in args['models'].items():
+            try:
+                _models[k] = models.from_pretrained(f"{path}/{v}")
+            except (AttributeError, ImportError) as e:
+                # Skip models that aren't available (e.g., SLatMeshDecoder if mesh representations aren't available)
+                if k in ['slat_decoder_mesh', 'slat_decoder_rf']:
+                    print(f"⚠️ Skipping optional model {k}: {e}")
+                    continue
+                raise
 
         new_pipeline = Pipeline(_models)
         new_pipeline._pretrained_args = args

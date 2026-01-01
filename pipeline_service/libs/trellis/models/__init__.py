@@ -21,7 +21,10 @@ def __getattr__(name):
         if name in __attributes:
             module_name = __attributes[name]
             module = importlib.import_module(f".{module_name}", __name__)
-            globals()[name] = getattr(module, name)
+            attr = getattr(module, name, None)
+            if attr is None:
+                raise AttributeError(f"module {__name__} has no attribute {name} (imported from {module_name})")
+            globals()[name] = attr
         elif name in __submodules:
             module = importlib.import_module(f".{name}", __name__)
             globals()[name] = module
