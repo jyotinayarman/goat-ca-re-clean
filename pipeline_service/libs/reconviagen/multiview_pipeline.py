@@ -177,7 +177,7 @@ class ReconViaGenMultiViewPipeline:
             # Use ReconViaGen multi-view generation (based on ReconViaGen-2 app.py)
             if len(valid_images) > 1:
                 print(f"🎯 Using multi-view ReconViaGen generation with {len(valid_images)} images")
-                # Use multi-image generation like in ReconViaGen-2
+                # Use VGGT pipeline's run method which accepts a list of images
                 outputs = self.pipeline.run(
                     image=valid_images,  # Pass list of images directly
                     seed=seed,
@@ -213,7 +213,7 @@ class ReconViaGenMultiViewPipeline:
                 )
             
             # Extract Gaussian from ReconViaGen output
-            # ReconViaGen returns a tuple: (results_dict, tensor, tensor)
+            # ReconViaGen VGGT pipeline returns a tuple: (results_dict, coords, ss_noise)
             if isinstance(outputs, tuple) and len(outputs) > 0:
                 results_dict = outputs[0]  # First element contains the actual results
                 if isinstance(results_dict, dict) and 'gaussian' in results_dict:
