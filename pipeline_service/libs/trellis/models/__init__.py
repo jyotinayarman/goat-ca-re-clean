@@ -6,6 +6,7 @@ __attributes = {
     'SparseStructureFlowModel': 'sparse_structure_flow',
     'SLatEncoder': 'structured_latent_vae',
     'SLatGaussianDecoder': 'structured_latent_vae',
+    'SLatMeshDecoder': 'structured_latent_vae',
     'SLatFlowModel': 'structured_latent_flow',
     'ModulatedMultiViewCond': 'sparse_structure_flow',
     'ModulatedSLATMultiViewCond': 'structured_latent_flow',
@@ -84,5 +85,5 @@ def save_finetuned_model(model, output_dir: str):
 if __name__ == '__main__':
     from .sparse_structure_vae import SparseStructureEncoder, SparseStructureDecoder
     from .sparse_structure_flow import SparseStructureFlowModel, ModulatedMultiViewCond
-    from .structured_latent_vae import SLatEncoder, SLatGaussianDecoder
+    from .structured_latent_vae import SLatEncoder, SLatGaussianDecoder, SLatMeshDecoder
     from .structured_latent_flow import SLatFlowModel, ModulatedSLATMultiViewCond
