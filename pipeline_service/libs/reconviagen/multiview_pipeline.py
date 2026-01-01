@@ -25,8 +25,16 @@ try:
     
     # Import from the local ReconViaGen trellis copy (now renamed to trellis)
     from trellis.pipelines.trellis_image_to_3d import TrellisVGGTTo3DPipeline
-    from trellis.representations import Gaussian, MeshExtractResult
-    from trellis.utils import render_utils, postprocessing_utils
+    from trellis.representations import Gaussian
+    try:
+        from trellis.representations import MeshExtractResult
+    except ImportError:
+        MeshExtractResult = None
+    try:
+        from trellis.utils import render_utils, postprocessing_utils
+    except ImportError:
+        render_utils = None
+        postprocessing_utils = None
     RECONVIAGEN_AVAILABLE = True
     print("✅ ReconViaGen imports successful - using local ReconViaGen implementation")
 except ImportError as e:

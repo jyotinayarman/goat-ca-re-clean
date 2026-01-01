@@ -51,7 +51,14 @@ class GenerationPipeline:
         await self.qwen_edit.startup()
         await self.rmbg.startup()
         if self.settings.use_reconviagen:
-            await self.reconviagen.startup()
+            try:
+                await self.reconviagen.startup()
+                if not self.reconviagen.is_ready():
+                    logger.warning("ReconViaGen failed to load, falling back to Trellis")
+                    await self.trellis.startup()
+            except Exception as e:
+                logger.error(f"ReconViaGen startup failed: {e}, falling back to Trellis")
+                await self.trellis.startup()
         else:
             await self.trellis.startup()
 
@@ -68,9 +75,9 @@ class GenerationPipeline:
         # Shutdown all modules
         await self.qwen_edit.shutdown()
         await self.rmbg.shutdown()
-        if self.settings.use_reconviagen:
+        if self.settings.use_reconviagen and self.reconviagen.is_ready():
             await self.reconviagen.shutdown()
-        else:
+        if self.trellis.is_ready():
             await self.trellis.shutdown()
 
         logger.info("Pipeline closed.")
