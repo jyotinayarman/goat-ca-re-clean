@@ -1,19 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# This source code is licensed under the Apache License, Version 2.0
-# found in the LICENSE file in the root directory of this source tree.
-
-
-# Implementation of 2D Rotary Position Embeddings (RoPE).
-
-# This module provides a clean implementation of 2D Rotary Position Embeddings,
-# which extends the original RoPE concept to handle 2D spatial positions.
-
-# Inspired by:
-#         https://github.com/meta-llama/codellama/blob/main/llama/model.py
-#         https://github.com/naver-ai/rope-vit
-
-
 import numpy as np
 import torch
 import torch.nn as nn
